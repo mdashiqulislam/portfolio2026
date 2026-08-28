@@ -1,26 +1,74 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  /* Surfaces */
+  --color-ink: #0c0c0c;
+  --color-card: #171717;
+
+  /* Brand */
+  --color-accent: #d0de00;
+
+  /* Text */
+  --color-muted: #808080;
+  --color-muted-dim: #7a7a7a;
+  /* Figma `Text/Body 1` — Selected Work meta copy */
+  --color-body: #636363;
+  /* Figma `Text/Body 2` — My Specialist Field service names, set at 90% */
+  --color-body-2: #a5a5a5;
+  /*
+   * My Specialist Field row numbers. Figma spells this one as a raw hex rather
+   * than a token, but it is exactly `Text/Body 2` at 90% over black — i.e. the
+   * same grey the service names beside it resolve to.
+   */
+  --color-numeral: #949494;
+
+  /* Figma `Text/Body 3` — the Selected Work tag chips use it as a fill */
+  --color-chip: #f0f0f0;
+
+  /* Monochrome customer logos */
+  --color-logo: #717171;
+
+  /* My Process step markers */
+  --color-step-1: var(--color-accent);
+  --color-step-2: #fd7348;
+  --color-step-3: #d6d5d0;
+  --color-step-4: #d174ff;
+  --color-step-5: #00decf;
+  --color-step-6: #ff68aa;
+
+  /* Type stacks — swap the CSS vars in layout.tsx to change a family */
+  --font-display: var(--font-display-src), "Times New Roman", serif;
+  --font-mono: var(--font-mono-src), ui-monospace, monospace;
+  --font-sans: var(--font-sans-src), system-ui, sans-serif;
+  --font-script: var(--font-script-src), cursive;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html,
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-ink);
+  color: #ffffff;
+}
+
+/*
+ * Figma renders several customer logos as a solid fill clipped by the logo
+ * artwork (a white shape under a `mix-blend-darken` grey plate). Reproducing
+ * that as a CSS mask gives the identical flat-grey result with one element.
+ */
+.logo-mask {
+  display: block;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+
+/* Full-bleed logo rail scrolls on narrow viewports without a visible bar. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
