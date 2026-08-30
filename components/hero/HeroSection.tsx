@@ -1,8 +1,9 @@
 import Image from "next/image";
 import TopNav from "./TopNav";
 import CustomerLogos from "./CustomerLogos";
-import ParticleHand from "@/components/effects/ParticleHand";
 import ScrambleText from "@/components/effects/ScrambleText";
+import LookAtAvatar from "@/components/effects/LookAtAvatar";
+import ScrollGrow from "@/components/effects/ScrollGrow";
 
 const STATS = [
   { label: "Years of Experience", value: "5 Years" },
@@ -10,60 +11,81 @@ const STATS = [
   { label: "Client Satisfaction", value: "100%" },
 ];
 
+/*
+ * Figma frame `Hero Section` (40004023:1265), 1600 × 960. The lockup is
+ * centred: H1 at y=180 (77px under the nav), CTA 48px below it, the avatar
+ * directly under the CTA (its box runs to y=907, sliding behind the logo
+ * rail, which paints on top). The `Flares` sunburst is bottom-anchored and
+ * centred at 1094/1600 of the frame width. Stats sit bottom-left and the
+ * positioning statement bottom-right, both above the rail (y≈679–756).
+ */
 export default function HeroSection() {
   return (
-    <section className="relative isolate flex min-h-[100svh] flex-col overflow-hidden bg-ink">
-      {/*
-        The artwork is placed exactly as in Figma: 131.75% × 114.38% of the
-        frame, offset -12.61% / -6.72%. The wrapper carries that geometry so the
-        image itself can stay `object-cover` — it keeps the crop on other
-        viewport aspect ratios instead of distorting.
-      */}
-      <div className="pointer-events-none absolute -z-10 left-[-12.61%] top-[-6.72%] h-[114.38%] w-[131.75%]">
-        {/* <Image
-          src="/figma/hero-bg.png"
+    <section className="relative isolate flex min-h-[100svh] flex-col overflow-hidden bg-black">
+      {/* Sunburst artwork, pinned to the bottom edge like the frame. */}
+      <div className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[max(68.4%,560px)] -translate-x-1/2">
+        <Image
+          src="/figma/hero/flares.png"
           alt=""
-          fill
+          width={1094}
+          height={665}
           priority
-          sizes="132vw"
-          className="object-cover object-center "
-        /> */}
-        {/*
-          Rebuilds the hand artwork as an interactive particle cloud, sampled
-          from the same image so it lands pixel-perfect on the static hand.
-          Falls back to the plain image if WebGL or sampling is unavailable.
-        */}
-        <ParticleHand src="/figma/hero-bg.png" />
+          className="h-auto w-full"
+        />
       </div>
-
-      {/*
-        On narrow viewports the artwork sits behind the copy. A scrim keeps the
-        stats and positioning statement legible; desktop matches Figma exactly.
-      */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-1/2 bg-gradient-to-t from-ink via-ink/80 to-transparent lg:hidden" />
 
       <TopNav />
 
-      <div className="relative z-10 flex flex-1 flex-col justify-between gap-16 pt-[57px] pb-[53px]">
-        {/* Main lockup */}
-        <div className="mx-auto w-full max-w-[1248px] px-6">
-          <div className="flex w-full max-w-[715px] flex-col items-start gap-[36px]">
-            <h1 className="font-display text-[clamp(40px,6.2vw,80px)] leading-[1.1] tracking-[-0.02em] text-balance text-white capitalize">
-              Helping Businesses to Scale Faster
-            </h1>
+      {/*
+        z-30 puts this whole layer above the logo rail (z-20): per the End
+        view frame the scaled avatar covers the rail, and the avatar's inner
+        z-index can't escape this wrapper's stacking context. Nothing else in
+        here overlaps the rail, so only the avatar is affected.
+      */}
+      <div className="relative z-30 flex flex-1 flex-col items-center px-6">
+        <h1 className="mt-[48px] max-w-[715px] text-center font-display text-[clamp(44px,5.625vw,90px)] leading-[1.1] tracking-[-0.02em] text-balance text-white capitalize lg:mt-[77px]">
+          Helping Businesses to Scale Faster
+        </h1>
 
-            <a
-              href="#contact"
-              className="inline-flex h-[32px] items-center justify-center bg-accent px-[16px] font-mono text-[14px] font-medium whitespace-nowrap text-ink uppercase transition-opacity hover:opacity-90"
-            >
-              <ScrambleText text="Start a Project" />
-            </a>
-          </div>
-        </div>
+        <a
+          href="#contact"
+          className="mt-[48px] inline-flex h-[32px] items-center justify-center bg-accent px-[16px] font-mono text-[14px] font-medium whitespace-nowrap text-ink uppercase transition-opacity hover:opacity-90"
+        >
+          <ScrambleText text="Start a Project" />
+        </a>
 
-        {/* Stats + positioning statement */}
-        <div className="mx-auto flex w-full max-w-[1248px] flex-col gap-10 px-6 lg:flex-row lg:items-end lg:justify-between">
-          <dl className="flex flex-wrap items-end gap-x-[12px] gap-y-8">
+        {/*
+          The avatar's box is 302×453, its lower part overlapping the logo
+          rail band (95px at frame size) — the negative bottom margin
+          recreates that. Per the End view frame it paints ABOVE the rail
+          (z-30 over the rail's z-20; at rest the overlap region is
+          transparent so nothing changes visually). ScrollGrow scales it
+          toward the End view's 2.46× as the page scrolls; LookAtAvatar
+          tilts it toward the cursor. The stack is pointer-transparent so
+          the grown avatar never blocks anything beneath.
+        */}
+        <ScrollGrow className="pointer-events-none relative z-30 -mt-[4px] lg:mb-[-95px]">
+          <LookAtAvatar>
+            <Image
+              src="/figma/hero/avatar.png"
+              alt=""
+              width={302}
+              height={453}
+              priority
+              className="h-auto w-[220px] lg:w-[302px]"
+            />
+          </LookAtAvatar>
+        </ScrollGrow>
+
+        {/*
+          Stats + positioning statement, bottom-aligned to each other and
+          anchored 56px above the logo rail. This wrapper is the absolute
+          containing block and its bottom edge sits exactly where the rail
+          begins, so the offset is literally that 56px gap. Below lg they
+          fall back into the normal flow under the avatar.
+        */}
+        <div className="mt-10 flex w-full max-w-[1248px] flex-col gap-10 pb-10 lg:pointer-events-none lg:absolute lg:inset-x-0 lg:bottom-[56px] lg:mx-auto lg:mt-0 lg:flex-row lg:items-end lg:justify-between lg:gap-6 lg:px-6 lg:pb-0">
+          <dl className="pointer-events-auto flex flex-wrap items-end gap-x-[12px] gap-y-8">
             {STATS.map((stat) => (
               <div
                 key={stat.label}
@@ -79,7 +101,7 @@ export default function HeroSection() {
             ))}
           </dl>
 
-          <p className="w-full max-w-[262px] font-sans text-[18px] leading-[1.2] text-muted">
+          <p className="pointer-events-auto w-full max-w-[262px] font-sans text-[18px] leading-[1.2] text-muted">
             Websites, AI products, brands, and system built for clarity, scales
             and impact.
           </p>

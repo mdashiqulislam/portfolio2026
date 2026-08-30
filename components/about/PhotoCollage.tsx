@@ -1,4 +1,6 @@
 import Image from "next/image";
+import type { CSSProperties } from "react";
+import CollageReveal from "./CollageReveal";
 
 /**
  * The collage occupies the full 1200px content column in Figma, from y 878.66
@@ -113,41 +115,102 @@ function pct(value: number) {
   return `${value}%`;
 }
 
-function Frame({ photo }: { photo: Photo }) {
+/**
+ * The centre image is the anchor of the reveal: it never moves, and the six
+ * around it start stacked on top of it and slide out to their own places.
+ */
+const ANCHOR = MIDDLE[0];
+
+/** Centre point of a photo, in percent of the stage. */
+function centre({ left, top, width, height }: Photo) {
+  return { x: left + width / 2, y: top + height / 2 };
+}
+
+/**
+ * Where a photo has to start for its centre to sit on the anchor's, given as a
+ * translation in percent of the photo's *own* box — which is what `translate()`
+ * resolves percentages against. Expressing it that way means the offset needs
+ * no pixel values and stays exact at every stage size.
+ */
+function offsetOntoAnchor(photo: Photo) {
+  const anchor = centre(ANCHOR);
+  const self = centre(photo);
+  return {
+    tx: `${(((anchor.x - self.x) / photo.width) * 100).toFixed(3)}%`,
+    ty: `${(((anchor.y - self.y) / photo.height) * 100).toFixed(3)}%`,
+  };
+}
+
+/** How far apart the photos start moving, nearest to the anchor first. */
+const STAGGER_MS = 55;
+
+/**
+ * Ordering the spread by distance makes it read as one outward push from the
+ * centre rather than six separate entrances.
+ */
+const SPREAD_ORDER = [...LEFT, ...RIGHT]
+  .map((photo) => {
+    const anchor = centre(ANCHOR);
+    const self = centre(photo);
+    // Put both axes on one scale before comparing — `top`/`height` are percent
+    // of the stage's height, which is much shorter than its width.
+    const dx = anchor.x - self.x;
+    const dy = ((anchor.y - self.y) * STAGE_H) / STAGE_W;
+    return { src: photo.src, distance: Math.hypot(dx, dy) };
+  })
+  .sort((a, b) => a.distance - b.distance)
+  .map((entry) => entry.src);
+
+function Frame({ photo, anchor }: { photo: Photo; anchor: boolean }) {
   const { src, alt, left, top, width, height, crop, stretch } = photo;
 
+  // The anchor sits still, so it carries none of the reveal's custom properties.
+  const reveal = anchor ? null : offsetOntoAnchor(photo);
+
+  const style = {
+    left: pct(left),
+    top: pct(top),
+    width: pct(width),
+    height: pct(height),
+    ...(reveal && {
+      "--tx": reveal.tx,
+      "--ty": reveal.ty,
+      "--reveal-delay": `${SPREAD_ORDER.indexOf(src) * STAGGER_MS}ms`,
+    }),
+  } as CSSProperties;
+
   return (
-    <li
-      // `bg-card` is the placeholder Figma paints behind each fill; it shows
-      // through only while the photo is still loading.
-      className="absolute overflow-hidden bg-card"
-      style={{
-        left: pct(left),
-        top: pct(top),
-        width: pct(width),
-        height: pct(height),
-      }}
-    >
-      <div
-        className="absolute"
-        style={
-          crop
-            ? {
-                left: pct(crop.left),
-                top: pct(crop.top),
-                width: pct(crop.width),
-                height: pct(crop.height),
-              }
-            : { inset: 0 }
-        }
-      >
-        <Image
-          src={src}
-          alt={alt}
-          fill
-          sizes={photoSizes(photo)}
-          className={stretch ? "object-fill" : "object-cover"}
-        />
+    <li className="absolute" data-anchor={anchor || undefined} style={style}>
+      {/*
+        The hover physics move this wrapper, never the `li` — the photo glides
+        while its hit area stays put under the cursor, and the shove composes
+        with the reveal's transform instead of fighting it on one element.
+        `overflow-hidden` rides along so the fill stays clipped to the frame,
+        and `bg-card` is the placeholder Figma paints behind it, which shows
+        through only while the photo is still loading.
+      */}
+      <div className="relative size-full overflow-hidden bg-card">
+        <div
+          className="absolute"
+          style={
+            crop
+              ? {
+                  left: pct(crop.left),
+                  top: pct(crop.top),
+                  width: pct(crop.width),
+                  height: pct(crop.height),
+                }
+              : { inset: 0 }
+          }
+        >
+          <Image
+            src={src}
+            alt={alt}
+            fill
+            sizes={photoSizes(photo)}
+            className={stretch ? "object-fill" : "object-cover"}
+          />
+        </div>
       </div>
     </li>
   );
@@ -159,19 +222,35 @@ export default function PhotoCollage() {
       Below `STAGE_MIN_W` the photos would shrink to thumbnails, so the stage
       stops scaling and the rail scrolls sideways instead — the same escape
       hatch the hero's logo rail uses.
+
+      That scroller only exists below `md`, which is exactly where it is needed:
+      the content column is `100vw - 48px`, so it falls under the stage's 720px
+      floor at viewports narrower than 768px. Above that the overflow goes back
+      to `visible`, because a scroll container clips — and `overflow-x: auto`
+      drags `overflow-y` from `visible` to `auto` with it, so the box was
+      cropping hovered photos on all four sides, not just horizontally.
     */
-    <div className="no-scrollbar -mx-6 overflow-x-auto px-6">
-      <ul
-        className="relative w-full list-none"
+    <div className="no-scrollbar -mx-6 overflow-x-auto px-6 md:overflow-x-visible">
+      {/*
+        With JavaScript off the stage never leaves `pending`, so undo it. The
+        reduced-motion case is handled in CSS instead, which also covers a slow
+        or failed hydration.
+      */}
+      <noscript>
+        <style>{`.collage[data-reveal="pending"] > li{transform:none!important;opacity:1!important}`}</style>
+      </noscript>
+
+      <CollageReveal
+        className="collage relative w-full list-none"
         style={{
           aspectRatio: `${STAGE_W} / ${STAGE_H}`,
           minWidth: `${STAGE_MIN_W}px`,
         }}
       >
         {[...LEFT, ...MIDDLE, ...RIGHT].map((photo) => (
-          <Frame key={photo.src} photo={photo} />
+          <Frame key={photo.src} photo={photo} anchor={photo === ANCHOR} />
         ))}
-      </ul>
+      </CollageReveal>
     </div>
   );
 }

@@ -11,8 +11,9 @@
   /* Text */
   --color-muted: #808080;
   --color-muted-dim: #7a7a7a;
-  /* Figma `Text/Body 1` — Selected Work meta copy */
-  --color-body: #636363;
+  /* Figma `Text/Body 1` — Selected Work + Testimonial meta copy, flattened to
+     one grey (#575757) across the white sections per client request */
+  --color-body: #575757;
   /* Figma `Text/Body 2` — My Specialist Field service names, set at 90% */
   --color-body-2: #a5a5a5;
   /*
@@ -24,6 +25,17 @@
 
   /* Figma `Text/Body 3` — the Selected Work tag chips use it as a fill */
   --color-chip: #f0f0f0;
+
+  /*
+   * My Specialist Field hover chips. Five fills rotate across the six rows,
+   * all under the same near-black label.
+   */
+  --color-chip-yellow: #fbf3af;
+  --color-chip-lavender: #e1daf7;
+  --color-chip-mint: #93eba9;
+  --color-chip-coral: #ff8f6c;
+  --color-chip-pink: #ffb7fa;
+  --color-chip-ink: #1d1d1d;
 
   /* Monochrome customer logos */
   --color-logo: #717171;
@@ -71,4 +83,150 @@ body {
 }
 .no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+/*
+ * Hero logo rail marquee. The track holds two identical card sets; sliding
+ * one full set's width (-50% of the track) on a linear loop reads as an
+ * endless right-to-left drift. One set is 1904px + a 16px trailing gap, and
+ * 48s puts the drift at ~40px/s — calm enough to read the logos.
+ */
+.logo-marquee {
+  animation: logo-marquee 48s linear infinite;
+}
+
+@keyframes logo-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logo-marquee {
+    animation: none;
+  }
+}
+
+/*
+ * About collage reveal. Each photo ships stacked on the centre image — `--tx`
+ * and `--ty` are the offset onto it, in percent of the photo's own box — and
+ * slides out to its place while fading up. The centre image is the anchor: it
+ * carries no offset and paints above the rest, so the others read as coming
+ * out from behind it rather than sliding in over the top.
+ *
+ * Both properties run on the same clock *and* the same curve, so opacity is
+ * exactly the fraction of the distance covered — at the halfway point a photo
+ * is half out and half visible, and it reaches full opacity as it arrives.
+ * Pairing them any other way reads as a slide followed by a separate fade.
+ */
+.collage > li[data-anchor] {
+  z-index: 1;
+}
+
+.collage > li:not([data-anchor]) {
+  transition:
+    transform 1200ms cubic-bezier(0.33, 1, 0.68, 1) var(--reveal-delay, 0ms),
+    opacity 1200ms cubic-bezier(0.33, 1, 0.68, 1) var(--reveal-delay, 0ms);
+}
+
+.collage[data-reveal="pending"] > li:not([data-anchor]) {
+  transform: translate(var(--tx, 0), var(--ty, 0));
+  opacity: 0;
+  /*
+   * Only while parked. The hint is what pre-promotes the layer so the first
+   * frame does not stutter; once the transition is running the browser keeps
+   * the layer on its own account, and leaving the hint on afterwards would pin
+   * six full-size photos in compositor memory for the rest of the page's life.
+   */
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collage[data-reveal="pending"] > li:not([data-anchor]) {
+    transform: none;
+    opacity: 1;
+  }
+  .collage > li:not([data-anchor]) {
+    transition: none;
+  }
+}
+
+/*
+ * Selected Work — a horizontal track the visitor drives by scrolling
+ * vertically while the section is pinned.
+ *
+ * The pin only exists from `lg` up and only when reduced motion has not been
+ * asked for. Everywhere else these rules never apply and the section stays an
+ * ordinary vertical stack, which is also what the server renders — so there is
+ * no layout flash while the script boots.
+ */
+.work-track,
+.work-list {
+  display: flex;
+  flex-direction: column;
+}
+.work-track {
+  gap: 4rem;
+}
+.work-list {
+  gap: 6rem;
+}
+
+@media (min-width: 64rem) and (prefers-reduced-motion: no-preference) {
+  .work-pin {
+    /*
+     * The card is 760px in the frame, but it also has to fit the viewport's
+     * height: the block is the mockup (540 ÷ 760 of the width) plus 78px of
+     * caption, and 160px is left clear above and below it.
+     */
+    --work-card-w: min(760px, 86vw, calc((100svh - 238px) * 1.4075));
+    --work-title-w: calc(var(--work-card-w) * 487 / 760);
+    --work-title-size: calc(var(--work-card-w) * 80 / 760);
+    --work-title-gap: calc(var(--work-card-w) * 130 / 760);
+    --work-card-gap: calc(var(--work-card-w) * 160 / 760);
+    --work-edge: calc(var(--work-card-w) * 200 / 760);
+
+    /* `--work-travel` is the track's overflow, measured by the component: the
+       section is that much taller than the viewport, so one pixel of vertical
+       scroll is one pixel of horizontal travel. */
+    height: calc(100svh + var(--work-travel, 0px));
+    padding: 0;
+  }
+
+  .work-sticky {
+    position: sticky;
+    top: 0;
+    display: flex;
+    height: 100svh;
+    align-items: center;
+    overflow: hidden;
+  }
+
+  .work-track {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--work-title-gap);
+    /* Symmetric frame margins: at rest the track is the `1st` frame exactly —
+       title at the left margin, first card beside it — and it ends on the same
+       margin once the last card has arrived. */
+    padding-left: var(--work-edge);
+    padding-right: var(--work-edge);
+    will-change: transform;
+  }
+
+  .work-list {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--work-card-gap);
+  }
+
+  .work-title {
+    width: var(--work-title-w);
+    font-size: var(--work-title-size);
+  }
+
+  .work-card {
+    width: var(--work-card-w);
+  }
 }

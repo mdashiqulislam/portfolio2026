@@ -16,7 +16,16 @@ export default function AboutSection() {
     <section
       id="about"
       aria-labelledby="about-label"
-      className="relative isolate bg-white pb-24 text-black lg:pb-[160px]"
+      /*
+        `clip`, not `hidden`: a hovered photo can be shoved ~80px, and near a
+        narrow viewport's edge that would otherwise push the page into
+        horizontal scroll. `hidden` would drag `overflow-y` to `auto` with it
+        and turn the whole section into a scroll container; `clip` is the one
+        value that bounds the x axis and leaves y alone. Nothing visible is
+        lost — it cuts at the viewport edge, where the photo has already left
+        the screen.
+      */
+      className="relative isolate overflow-x-clip bg-white pb-24 text-black lg:pb-[160px]"
     >
       <div className="mx-auto w-full max-w-[1248px] px-6">
         {/*
@@ -33,7 +42,7 @@ export default function AboutSection() {
         <div className="grid gap-y-12 pt-20 lg:grid-cols-[27.8333%_73.8333%] lg:grid-rows-[290px_284px] lg:gap-y-0 lg:pt-[160px]">
           <h2
             id="about-label"
-            className="font-mono text-[14px] font-medium text-muted uppercase lg:col-start-1 lg:row-start-1"
+            className="font-mono text-[14px] leading-[normal] font-medium text-[#575757] uppercase lg:col-start-1 lg:row-start-1"
           >
             About me
           </h2>
@@ -61,7 +70,7 @@ export default function AboutSection() {
             </div>
           </div>
 
-          <p className="font-sans text-[20px] leading-[1.3] tracking-[-0.04em] text-muted lg:col-start-2 lg:row-start-2 lg:mt-[174px] lg:ml-[33.634%] lg:w-[64.108%] lg:text-[24px]">
+          <p className="font-sans text-[20px] leading-[1.3] tracking-[-0.04em] text-[#575757] lg:col-start-2 lg:row-start-2 lg:mt-[174px] lg:ml-[33.634%] lg:w-[64.108%] lg:text-[24px]">
             With 5 years of experience designing SaaS, AI products, and web
             applications, I work as a strategic design partner helping founders
             validate ideas, reduce design friction, and deliver products with

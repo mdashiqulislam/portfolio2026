@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
-import { Caveat, Inter, Instrument_Serif, Spline_Sans_Mono } from "next/font/google";
+import { Caveat, Inter, Spline_Sans_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 
+// Figma sets the body copy in `Inter Display`. That is Inter's display optical
+// size, so requesting the `opsz` axis (and leaving `font-optical-sizing: auto`)
+// gets the real thing rather than the text cut stretched to 24px.
 const sans = Inter({
   variable: "--font-sans-src",
   subsets: ["latin"],
+  axes: ["opsz"],
 });
 
 const mono = Spline_Sans_Mono({
@@ -13,12 +18,23 @@ const mono = Spline_Sans_Mono({
   weight: ["500"],
 });
 
-// Stand-in for "Feature Deck" (a licensed trial face that can't be shipped).
-// Closest free high-contrast display serif; swap this import to change it.
-const display = Instrument_Serif({
+// The face Figma actually uses, self-hosted from the trial the designer
+// supplied, so the display type matches the frames exactly rather than through
+// a stand-in. Two things to know about this file:
+//   - It is the *trial* cut. Before this goes public it needs a real webfont
+//     licence from Commercial Type; the file swaps in at the same path.
+//   - The trial carries only 74 codepoints (A–Z a–z 0–9 . , ' " ! ? -). The one
+//     character the site needs and it lacks is `&`, in the Work heading, which
+//     falls through to the next face in `--font-display`.
+const display = localFont({
+  src: "./fonts/feature-deck-regular.woff2",
   variable: "--font-display-src",
-  subsets: ["latin"],
-  weight: ["400"],
+  weight: "400",
+  style: "normal",
+  display: "swap",
+  // Feature Deck is a serif, so size-adjust the fallback off Times rather than
+  // next/font's Arial default — that is also what `--font-display` falls to.
+  adjustFontFallback: "Times New Roman",
 });
 
 // The footer's handwritten "Hire Your Next!" note — the face Figma actually uses.
