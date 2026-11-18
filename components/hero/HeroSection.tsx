@@ -2,6 +2,7 @@ import Image from "next/image";
 import TopNav from "./TopNav";
 import CustomerLogos from "./CustomerLogos";
 import ScrambleText from "@/components/effects/ScrambleText";
+import Avatar3D from "@/components/effects/Avatar3D";
 import LookAtAvatar from "@/components/effects/LookAtAvatar";
 import ScrollGrow from "@/components/effects/ScrollGrow";
 
@@ -60,21 +61,29 @@ export default function HeroSection() {
           recreates that. Per the End view frame it paints ABOVE the rail
           (z-30 over the rail's z-20; at rest the overlap region is
           transparent so nothing changes visually). ScrollGrow scales it
-          toward the End view's 2.46× as the page scrolls; LookAtAvatar
-          tilts it toward the cursor. The stack is pointer-transparent so
-          the grown avatar never blocks anything beneath.
+          toward the End view's 2.46× as the page scrolls; Avatar3D swaps in
+          a WebGL relief of the same PNG that turns toward the cursor, with
+          the LookAtAvatar+Image stack server-rendered inside it as the
+          fallback (and the LCP image). The fallback stays next/image-
+          optimized (~50KB variant); only the WebGL scene fetches the raw
+          308KB PNG, lazily on idle and solely for visitors who pass its
+          gates, so the heavy source never rides the preload/LCP critical
+          path. The stack is pointer-transparent so the grown avatar never
+          blocks anything beneath.
         */}
         <ScrollGrow className="pointer-events-none relative z-30 -mt-[4px] lg:mb-[-95px]">
-          <LookAtAvatar>
-            <Image
-              src="/figma/hero/avatar.png"
-              alt=""
-              width={302}
-              height={453}
-              priority
-              className="h-auto w-[220px] lg:w-[302px]"
-            />
-          </LookAtAvatar>
+          <Avatar3D>
+            <LookAtAvatar>
+              <Image
+                src="/figma/hero/avatar.png"
+                alt=""
+                width={302}
+                height={453}
+                priority
+                className="h-auto w-[220px] lg:w-[302px]"
+              />
+            </LookAtAvatar>
+          </Avatar3D>
         </ScrollGrow>
 
         {/*

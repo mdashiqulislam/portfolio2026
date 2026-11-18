@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import * as THREE from "three";
+import type * as ThreeNS from "three";
 import {
   ASPECT,
   CONTENT_CENTER_Y,
@@ -17,6 +17,15 @@ import {
   SLIDE_W,
   VIEW_H,
 } from "@/components/short-portfolio/framing";
+
+/**
+ * The three namespace, loaded on demand the first time the ring nears the
+ * viewport (the same IntersectionObserver that already lazily builds the
+ * scene). Keeping the static import out of this module keeps the ~150KB-gzip
+ * library out of the home route's initial JS — same chunk boundary pattern as
+ * effects/avatar3d. Assigned in init() before any runtime use.
+ */
+let THREE: typeof ThreeNS;
 
 export type RingSlide = {
   /** Texture path under /public — a 1440px 4:3 webp. */
@@ -108,7 +117,7 @@ function labelTexture(name: string, category: string, fontFamily: string) {
 
 /** Bow a plane: z = -CURVE·(1 − u²), zero at the edges, deepest mid-slide. */
 function applyCurvature(
-  geometry: THREE.PlaneGeometry,
+  geometry: ThreeNS.PlaneGeometry,
   width: number,
   factor: number,
 ) {
@@ -158,7 +167,7 @@ export default function PortfolioRing({ slides }: { slides: RingSlide[] }) {
       uWidth: { value: 1 },
     };
 
-    const injectWave = (material: THREE.Material) => {
+    const injectWave = (material: ThreeNS.Material) => {
       material.onBeforeCompile = (shader) => {
         shader.uniforms.uTime = wave.uTime;
         shader.uniforms.uAmp = wave.uAmp;
@@ -202,16 +211,16 @@ export default function PortfolioRing({ slides }: { slides: RingSlide[] }) {
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
-    let renderer: THREE.WebGLRenderer | null = null;
-    let scene: THREE.Scene | null = null;
-    let camera: THREE.PerspectiveCamera | null = null;
-    let group: THREE.Group | null = null;
-    const clock = new THREE.Clock();
+    let renderer: ThreeNS.WebGLRenderer | null = null;
+    let scene: ThreeNS.Scene | null = null;
+    let camera: ThreeNS.PerspectiveCamera | null = null;
+    let group: ThreeNS.Group | null = null;
+    let clock: ThreeNS.Clock | null = null; // created in init, after three loads
 
     function frame() {
       if (!running || disposed || contextLost) return;
       rafId = requestAnimationFrame(frame);
-      if (!renderer || !scene || !camera || !group) return;
+      if (!renderer || !scene || !camera || !group || !clock) return;
 
       // Clamped so a background-tab pause doesn't land as one giant step.
       const dt = Math.min(clock.getDelta(), 0.05);
@@ -249,7 +258,7 @@ export default function PortfolioRing({ slides }: { slides: RingSlide[] }) {
     function start() {
       if (running || disposed || !initialized) return;
       running = true;
-      clock.getDelta(); // swallow the pause so dt starts near zero
+      clock?.getDelta(); // swallow the pause so dt starts near zero
       rafId = requestAnimationFrame(frame);
     }
 
@@ -261,6 +270,15 @@ export default function PortfolioRing({ slides }: { slides: RingSlide[] }) {
     async function init() {
       if (initialized || disposed) return;
       initialized = true;
+
+      try {
+        THREE = await import("three");
+      } catch {
+        initialized = false; // chunk fetch failed — retry on the next intersect
+        return;
+      }
+      if (disposed) return;
+      clock = new THREE.Clock();
 
       const width = wrap.clientWidth || 1;
       const height = width / ASPECT;

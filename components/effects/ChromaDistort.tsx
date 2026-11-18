@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect } from "react";
-import * as THREE from "three";
+import type * as ThreeNS from "three";
+
+/**
+ * The three namespace, loaded on demand once the effect's gates pass (desktop
+ * width, motion allowed, distortable cards present). Keeping the static
+ * import out of this module keeps the ~150KB-gzip library out of the home
+ * route's initial JS — same chunk boundary pattern as effects/avatar3d and
+ * PortfolioRing. Assigned in init() before any runtime use.
+ */
+let THREE: typeof ThreeNS;
 
 /**
  * Cursor-driven distortion + spectral chromatic aberration for the Selected
@@ -112,18 +121,18 @@ type Unit = {
   /** The card's image box — position source and pointer target. */
   wrapper: HTMLElement;
   img: HTMLImageElement;
-  scene: THREE.Scene;
-  camera: THREE.OrthographicCamera;
-  plane: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
-  dataTex: THREE.DataTexture;
+  scene: ThreeNS.Scene;
+  camera: ThreeNS.OrthographicCamera;
+  plane: ThreeNS.Mesh<ThreeNS.PlaneGeometry, ThreeNS.ShaderMaterial>;
+  dataTex: ThreeNS.DataTexture;
   uniforms: {
-    uTexture: { value: THREE.Texture | null };
-    uDataTexture: { value: THREE.DataTexture };
-    uMouse: { value: THREE.Vector2 };
+    uTexture: { value: ThreeNS.Texture | null };
+    uDataTexture: { value: ThreeNS.DataTexture };
+    uMouse: { value: ThreeNS.Vector2 };
     uAberration: { value: number };
     uImageAspect: { value: number };
     uContainerAspect: { value: number };
-    uResolution: { value: THREE.Vector2 };
+    uResolution: { value: ThreeNS.Vector2 };
     uOpacity: { value: number };
     uZoom: { value: number };
   };
@@ -162,290 +171,308 @@ export default function ChromaDistort({ scope }: { scope: string }) {
     ];
     if (!wrappers.length) return;
 
-    let renderer: THREE.WebGLRenderer;
-    try {
-      // preserveDrawingBuffer matches the reference's distortion renderer and
-      // keeps the last frame readable (screenshots, readPixels verification).
-      renderer = new THREE.WebGLRenderer({
-        antialias: false,
-        alpha: true,
-        preserveDrawingBuffer: true,
-      });
-    } catch {
-      return; // No WebGL — the plain images are already the fallback.
-    }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_DPR));
-    renderer.setClearColor(0x000000, 0);
-    renderer.autoClear = false;
-    renderer.domElement.style.cssText =
-      "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:30;";
-    document.body.appendChild(renderer.domElement);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-
-    const floatLinear = renderer.extensions.has("OES_texture_float_linear");
-    const units: Unit[] = [];
     let disposed = false;
+    let cleanup: (() => void) | null = null;
 
-    const makeUnit = (wrapper: HTMLElement, img: HTMLImageElement) => {
-      const scene = new THREE.Scene();
-      const camera = new THREE.OrthographicCamera(-0.5, 0.5, 0.5, -0.5, -1000, 1000);
-      camera.position.z = 2;
+    async function init() {
+      try {
+        THREE = await import("three");
+      } catch {
+        return; // chunk fetch failed — the plain images stay as the fallback
+      }
+      if (disposed || !gate.matches) return;
 
-      const data = new Float32Array(4 * GRID * GRID);
-      const dataTex = new THREE.DataTexture(
-        data,
-        GRID,
-        GRID,
-        THREE.RGBAFormat,
-        THREE.FloatType,
-      );
-      // RGBA32F is only LINEAR-filterable behind this extension; without it
-      // the field samples NEAREST — the reference's own fallback — and the
-      // shader's 5-tap blur still smooths the result.
-      dataTex.minFilter = dataTex.magFilter = floatLinear
-        ? THREE.LinearFilter
-        : THREE.NearestFilter;
-      dataTex.needsUpdate = true;
-
-      const uniforms: Unit["uniforms"] = {
-        uTexture: { value: null },
-        uDataTexture: { value: dataTex },
-        uMouse: { value: new THREE.Vector2(0.5, 0.5) },
-        uAberration: { value: ABERRATION },
-        uImageAspect: { value: 1 },
-        uContainerAspect: { value: 1 },
-        uResolution: { value: new THREE.Vector2(1, 1) },
-        uOpacity: { value: 1 },
-        uZoom: { value: 1 },
-      };
-
-      // The warp is entirely per-fragment, so the plane needs no segments.
-      const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(1, 1),
-        new THREE.ShaderMaterial({
-          uniforms,
-          vertexShader: VERT,
-          fragmentShader: FRAG,
-          transparent: true,
-        }),
-      );
-      scene.add(plane);
-
-      const unit: Unit = {
-        wrapper,
-        img,
-        scene,
-        camera,
-        plane,
-        dataTex,
-        uniforms,
-        mouse: { x: 0.5, y: 0.5, vX: 0, vY: 0, moved: false },
-        ready: false,
-        // True until the IntersectionObserver's first (async) report — a
-        // pointermove can arrive before it, and must not insta-settle.
-        inViewport: true,
-        active: false,
-        cooldown: 0,
-        lastAspect: 0,
-        dispose: () => {
-          io.disconnect();
-          wrapper.removeEventListener("pointermove", onMove);
-          wrapper.removeEventListener("pointerleave", onLeave);
-          plane.geometry.dispose();
-          plane.material.dispose();
-          dataTex.dispose();
-          uniforms.uTexture.value?.dispose();
-        },
-      };
-
-      // Loaded through TextureLoader on the img's resolved URL, exactly as
-      // the reference does (the browser cache makes it a free second request).
-      // Color spaces are left untouched so the sampled values pass through
-      // the shader exactly as the reference's do.
-      const adopt = () => {
-        if (disposed || !img.naturalWidth || unit.ready) return;
-        new THREE.TextureLoader().load(img.currentSrc || img.src, (tex) => {
-          if (disposed) {
-            tex.dispose();
-            return;
-          }
-          tex.minFilter = tex.magFilter = THREE.LinearFilter;
-          tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-          uniforms.uTexture.value = tex;
-          uniforms.uImageAspect.value = tex.image.width / tex.image.height;
-          unit.ready = true;
+      let renderer: ThreeNS.WebGLRenderer;
+      try {
+        // preserveDrawingBuffer matches the reference's distortion renderer and
+        // keeps the last frame readable (screenshots, readPixels verification).
+        renderer = new THREE.WebGLRenderer({
+          antialias: false,
+          alpha: true,
+          preserveDrawingBuffer: true,
         });
-      };
-      if (img.complete && img.naturalWidth) adopt();
-      else img.addEventListener("load", adopt, { once: true });
-
-      const onMove = (e: PointerEvent) => {
-        const r = wrapper.getBoundingClientRect();
-        if (!r.width || !r.height) return;
-        const x = (e.clientX - r.left) / r.width;
-        const y = 1 - (e.clientY - r.top) / r.height;
-        // Same half-life smoothing as the reference.
-        unit.mouse.vX += 0.5 * (x - unit.mouse.x - unit.mouse.vX);
-        unit.mouse.vY += 0.5 * (y - unit.mouse.y - unit.mouse.vY);
-        unit.mouse.x = x;
-        unit.mouse.y = y;
-        unit.mouse.moved = true;
-        unit.cooldown = COOLDOWN;
-        if (!unit.active && unit.ready) {
-          unit.active = true;
-          needsFrame = true;
-        }
-      };
-      const onLeave = () => {
-        unit.mouse.vX = 0;
-        unit.mouse.vY = 0;
-      };
-      wrapper.addEventListener("pointermove", onMove);
-      wrapper.addEventListener("pointerleave", onLeave);
-
-      const io = new IntersectionObserver(
-        ([entry]) => {
-          unit.inViewport = entry.isIntersecting;
-        },
-        { rootMargin: "100px" },
-      );
-      io.observe(wrapper);
-
-      units.push(unit);
-    };
-
-    for (const wrapper of wrappers) {
-      const img = wrapper.querySelector("img");
-      if (img) makeUnit(wrapper, img);
-    }
-    if (!units.length) {
-      renderer.dispose();
-      renderer.domElement.remove();
-      return;
-    }
-
-    /** Splat the pointer's velocity into the field, decay the rest. */
-    const stepField = (unit: Unit) => {
-      const data = unit.dataTex.image.data as Float32Array;
-      const m = unit.mouse;
-      for (let i = 0; i < GRID * GRID; i++) {
-        data[4 * i] *= RELAXATION;
-        data[4 * i + 1] *= RELAXATION;
+      } catch {
+        return; // No WebGL — the plain images are already the fallback.
       }
-      const gx = GRID * m.x;
-      const gy = GRID * m.y;
-      const radius = GRID * MOUSE_RADIUS;
-      for (let x = 0; x < GRID; x++) {
-        for (let y = 0; y < GRID; y++) {
-          const d2 = (gx - x) * (gx - x) + (gy - y) * (gy - y);
-          if (d2 < radius * radius) {
-            const i = 4 * (x + GRID * y);
-            const power = Math.min(radius / Math.sqrt(d2 + 1e-4), 10);
-            data[i] += 100 * STRENGTH * m.vX * power;
-            data[i + 1] -= 100 * STRENGTH * m.vY * power;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_DPR));
+      renderer.setClearColor(0x000000, 0);
+      renderer.autoClear = false;
+      renderer.domElement.style.cssText =
+        "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:30;";
+      document.body.appendChild(renderer.domElement);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      const floatLinear = renderer.extensions.has("OES_texture_float_linear");
+      const units: Unit[] = [];
+
+      const makeUnit = (wrapper: HTMLElement, img: HTMLImageElement) => {
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-0.5, 0.5, 0.5, -0.5, -1000, 1000);
+        camera.position.z = 2;
+
+        const data = new Float32Array(4 * GRID * GRID);
+        const dataTex = new THREE.DataTexture(
+          data,
+          GRID,
+          GRID,
+          THREE.RGBAFormat,
+          THREE.FloatType,
+        );
+        // RGBA32F is only LINEAR-filterable behind this extension; without it
+        // the field samples NEAREST — the reference's own fallback — and the
+        // shader's 5-tap blur still smooths the result.
+        dataTex.minFilter = dataTex.magFilter = floatLinear
+          ? THREE.LinearFilter
+          : THREE.NearestFilter;
+        dataTex.needsUpdate = true;
+
+        const uniforms: Unit["uniforms"] = {
+          uTexture: { value: null },
+          uDataTexture: { value: dataTex },
+          uMouse: { value: new THREE.Vector2(0.5, 0.5) },
+          uAberration: { value: ABERRATION },
+          uImageAspect: { value: 1 },
+          uContainerAspect: { value: 1 },
+          uResolution: { value: new THREE.Vector2(1, 1) },
+          uOpacity: { value: 1 },
+          uZoom: { value: 1 },
+        };
+
+        // The warp is entirely per-fragment, so the plane needs no segments.
+        const plane = new THREE.Mesh(
+          new THREE.PlaneGeometry(1, 1),
+          new THREE.ShaderMaterial({
+            uniforms,
+            vertexShader: VERT,
+            fragmentShader: FRAG,
+            transparent: true,
+          }),
+        );
+        scene.add(plane);
+
+        const unit: Unit = {
+          wrapper,
+          img,
+          scene,
+          camera,
+          plane,
+          dataTex,
+          uniforms,
+          mouse: { x: 0.5, y: 0.5, vX: 0, vY: 0, moved: false },
+          ready: false,
+          // True until the IntersectionObserver's first (async) report — a
+          // pointermove can arrive before it, and must not insta-settle.
+          inViewport: true,
+          active: false,
+          cooldown: 0,
+          lastAspect: 0,
+          dispose: () => {
+            io.disconnect();
+            wrapper.removeEventListener("pointermove", onMove);
+            wrapper.removeEventListener("pointerleave", onLeave);
+            plane.geometry.dispose();
+            plane.material.dispose();
+            dataTex.dispose();
+            uniforms.uTexture.value?.dispose();
+          },
+        };
+
+        // Loaded through TextureLoader on the img's resolved URL, exactly as
+        // the reference does (the browser cache makes it a free second request).
+        // Color spaces are left untouched so the sampled values pass through
+        // the shader exactly as the reference's do.
+        const adopt = () => {
+          if (disposed || !img.naturalWidth || unit.ready) return;
+          new THREE.TextureLoader().load(img.currentSrc || img.src, (tex) => {
+            if (disposed) {
+              tex.dispose();
+              return;
+            }
+            tex.minFilter = tex.magFilter = THREE.LinearFilter;
+            tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+            uniforms.uTexture.value = tex;
+            uniforms.uImageAspect.value = tex.image.width / tex.image.height;
+            unit.ready = true;
+          });
+        };
+        if (img.complete && img.naturalWidth) adopt();
+        else img.addEventListener("load", adopt, { once: true });
+
+        const onMove = (e: PointerEvent) => {
+          const r = wrapper.getBoundingClientRect();
+          if (!r.width || !r.height) return;
+          const x = (e.clientX - r.left) / r.width;
+          const y = 1 - (e.clientY - r.top) / r.height;
+          // Same half-life smoothing as the reference.
+          unit.mouse.vX += 0.5 * (x - unit.mouse.x - unit.mouse.vX);
+          unit.mouse.vY += 0.5 * (y - unit.mouse.y - unit.mouse.vY);
+          unit.mouse.x = x;
+          unit.mouse.y = y;
+          unit.mouse.moved = true;
+          unit.cooldown = COOLDOWN;
+          if (!unit.active && unit.ready) {
+            unit.active = true;
+            needsFrame = true;
+          }
+        };
+        const onLeave = () => {
+          unit.mouse.vX = 0;
+          unit.mouse.vY = 0;
+        };
+        wrapper.addEventListener("pointermove", onMove);
+        wrapper.addEventListener("pointerleave", onLeave);
+
+        const io = new IntersectionObserver(
+          ([entry]) => {
+            unit.inViewport = entry.isIntersecting;
+          },
+          { rootMargin: "100px" },
+        );
+        io.observe(wrapper);
+
+        units.push(unit);
+      };
+
+      for (const wrapper of wrappers) {
+        const img = wrapper.querySelector("img");
+        if (img) makeUnit(wrapper, img);
+      }
+      if (!units.length) {
+        renderer.dispose();
+        renderer.domElement.remove();
+        return;
+      }
+
+      /** Splat the pointer's velocity into the field, decay the rest. */
+      const stepField = (unit: Unit) => {
+        const data = unit.dataTex.image.data as Float32Array;
+        const m = unit.mouse;
+        for (let i = 0; i < GRID * GRID; i++) {
+          data[4 * i] *= RELAXATION;
+          data[4 * i + 1] *= RELAXATION;
+        }
+        const gx = GRID * m.x;
+        const gy = GRID * m.y;
+        const radius = GRID * MOUSE_RADIUS;
+        for (let x = 0; x < GRID; x++) {
+          for (let y = 0; y < GRID; y++) {
+            const d2 = (gx - x) * (gx - x) + (gy - y) * (gy - y);
+            if (d2 < radius * radius) {
+              const i = 4 * (x + GRID * y);
+              const power = Math.min(radius / Math.sqrt(d2 + 1e-4), 10);
+              data[i] += 100 * STRENGTH * m.vX * power;
+              data[i + 1] -= 100 * STRENGTH * m.vY * power;
+            }
           }
         }
-      }
-      if (!m.moved) {
-        m.vX *= 0.85;
-        m.vY *= 0.85;
-      }
-      m.moved = false;
-      unit.dataTex.needsUpdate = true;
-      unit.uniforms.uMouse.value.set(m.x, m.y);
-    };
-
-    /** Hand the card back to the DOM image and let the canvas go blank. */
-    const settle = (unit: Unit) => {
-      unit.active = false;
-      unit.img.style.visibility = "";
-      (unit.dataTex.image.data as Float32Array).fill(0);
-      unit.dataTex.needsUpdate = true;
-    };
-
-    let raf = 0;
-    let needsFrame = false;
-    const frame = () => {
-      raf = requestAnimationFrame(frame);
-      let anyActive = false;
-      for (const unit of units) if (unit.active) anyActive = true;
-      if (!anyActive && !needsFrame) return;
-      needsFrame = false;
-
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      renderer.setScissorTest(false);
-      renderer.setViewport(0, 0, w, h);
-      renderer.clear();
-      renderer.setScissorTest(true);
-
-      for (const unit of units) {
-        if (!unit.active) continue;
-        if (!unit.inViewport) {
-          settle(unit);
-          continue;
+        if (!m.moved) {
+          m.vX *= 0.85;
+          m.vY *= 0.85;
         }
-        stepField(unit);
-        if (--unit.cooldown <= 0) {
-          settle(unit);
-          continue;
-        }
+        m.moved = false;
+        unit.dataTex.needsUpdate = true;
+        unit.uniforms.uMouse.value.set(m.x, m.y);
+      };
 
-        const rect = unit.wrapper.getBoundingClientRect();
-        if (!rect.width || !rect.height || rect.bottom <= 0 || rect.top >= h) {
-          settle(unit);
-          continue;
-        }
-        const aspect = rect.width / rect.height;
-        if (aspect !== unit.lastAspect) {
-          unit.plane.scale.set(aspect, 1, 1);
-          unit.camera.left = -aspect / 2;
-          unit.camera.right = aspect / 2;
-          unit.camera.updateProjectionMatrix();
-          unit.lastAspect = aspect;
-        }
-        unit.uniforms.uContainerAspect.value = aspect;
-        unit.uniforms.uResolution.value.set(rect.width, rect.height);
-
-        const bottom = h - rect.bottom;
-        renderer.setViewport(rect.left, bottom, rect.width, rect.height);
-        renderer.setScissor(rect.left, bottom, rect.width, rect.height);
-        renderer.render(unit.scene, unit.camera);
-        // Painted this frame, so the img can drop out with no gap. Both
-        // changes land before the browser's next paint.
-        unit.img.style.visibility = "hidden";
-      }
-    };
-    raf = requestAnimationFrame(frame);
-
-    const onResize = () => {
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_DPR));
-      needsFrame = true;
-    };
-    window.addEventListener("resize", onResize);
-
-    // Dropping below `lg` (or turning reduced motion on) tears the whole
-    // thing down; re-entering desktop re-runs the effect via the listener.
-    const onGate = () => {
-      if (!gate.matches) cleanup();
-    };
-    gate.addEventListener("change", onGate);
-
-    const cleanup = () => {
-      if (disposed) return;
-      disposed = true;
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", onResize);
-      gate.removeEventListener("change", onGate);
-      for (const unit of units) {
+      /** Hand the card back to the DOM image and let the canvas go blank. */
+      const settle = (unit: Unit) => {
+        unit.active = false;
         unit.img.style.visibility = "";
-        unit.dispose();
-      }
-      renderer.dispose();
-      renderer.domElement.remove();
+        (unit.dataTex.image.data as Float32Array).fill(0);
+        unit.dataTex.needsUpdate = true;
+      };
+
+      let raf = 0;
+      let needsFrame = false;
+      const frame = () => {
+        raf = requestAnimationFrame(frame);
+        let anyActive = false;
+        for (const unit of units) if (unit.active) anyActive = true;
+        if (!anyActive && !needsFrame) return;
+        needsFrame = false;
+
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        renderer.setScissorTest(false);
+        renderer.setViewport(0, 0, w, h);
+        renderer.clear();
+        renderer.setScissorTest(true);
+
+        for (const unit of units) {
+          if (!unit.active) continue;
+          if (!unit.inViewport) {
+            settle(unit);
+            continue;
+          }
+          stepField(unit);
+          if (--unit.cooldown <= 0) {
+            settle(unit);
+            continue;
+          }
+
+          const rect = unit.wrapper.getBoundingClientRect();
+          if (!rect.width || !rect.height || rect.bottom <= 0 || rect.top >= h) {
+            settle(unit);
+            continue;
+          }
+          const aspect = rect.width / rect.height;
+          if (aspect !== unit.lastAspect) {
+            unit.plane.scale.set(aspect, 1, 1);
+            unit.camera.left = -aspect / 2;
+            unit.camera.right = aspect / 2;
+            unit.camera.updateProjectionMatrix();
+            unit.lastAspect = aspect;
+          }
+          unit.uniforms.uContainerAspect.value = aspect;
+          unit.uniforms.uResolution.value.set(rect.width, rect.height);
+
+          const bottom = h - rect.bottom;
+          renderer.setViewport(rect.left, bottom, rect.width, rect.height);
+          renderer.setScissor(rect.left, bottom, rect.width, rect.height);
+          renderer.render(unit.scene, unit.camera);
+          // Painted this frame, so the img can drop out with no gap. Both
+          // changes land before the browser's next paint.
+          unit.img.style.visibility = "hidden";
+        }
+      };
+      raf = requestAnimationFrame(frame);
+
+      const onResize = () => {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_DPR));
+        needsFrame = true;
+      };
+      window.addEventListener("resize", onResize);
+
+      // Dropping below `lg` (or turning reduced motion on) tears the whole
+      // thing down; re-entering desktop re-runs the effect via the listener.
+      const onGate = () => {
+        if (!gate.matches) cleanup?.();
+      };
+      gate.addEventListener("change", onGate);
+
+      cleanup = () => {
+        if (disposed) return;
+        disposed = true;
+        cancelAnimationFrame(raf);
+        window.removeEventListener("resize", onResize);
+        gate.removeEventListener("change", onGate);
+        for (const unit of units) {
+          unit.img.style.visibility = "";
+          unit.dispose();
+        }
+        renderer.dispose();
+        renderer.domElement.remove();
+      };
+    }
+
+    void init();
+    return () => {
+      // Unmount before init finished: the flag makes init (and its texture
+      // callbacks) bail. Afterwards cleanup owns the flag and the teardown.
+      if (cleanup) cleanup();
+      else disposed = true;
     };
-    return cleanup;
   }, [scope]);
 
   return null;
